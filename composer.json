@@ -22,7 +22,9 @@
   ],
   "require": {
     "php": "^8",
-    "guzzlehttp/guzzle": "^7.3"
+    "guzzlehttp/guzzle": "^7.3",
+    "maxakawizard/json-collection-parser": "~1.0",
+    "pestphp/pest-plugin-parallel": "^1.0"
   },
   "autoload": {
     "psr-4": {

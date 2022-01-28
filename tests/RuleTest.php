@@ -1,85 +1,72 @@
 <?php
 
-use GuzzleHttp\Psr7\Request;
 use RWC\TwitterStream\Rule;
 
-test('setters and getters', function () {
-    Rule::useBearerToken('some token');
-    $rule = new Rule('rule', 'tag');
-    $rule->withId('1234');
-    expect($rule->getValue())->toBe('rule');
-    expect($rule->getTag())->toBe('tag');
-    expect($rule->getId())->toBe('1234');
+it('can build a rule', function () {
+    $builder = Rule::create('#php')
+        ->retweets()
+        ->from('@afelixdorn');
+
+    expect((string)$builder)->toBe('#php is:retweet from:@afelixdorn');
 });
 
-it('can add a rule', function () {
-    $requestsSent = [];
-    $client = useHttpClient([
-        $returnedPayload = [
-            'data' => [
-                '0' => [
-                    'value' => 'cats has:links',
-                    'tag' => 'cats with links',
-                    'id' => '1390687625925824521'
-                ]
-            ],
-            'meta' => [
-                'sent' => (new DateTime())->format(DateTimeImmutable::RFC3339),
-                'summary' => [
-                    'created' => 1,
-                    'not_created' => 0,
-                    'valid' => 1,
-                    'invalid' => 0
-                ]
-            ]
-        ]
-    ], $requestsSent);
-    Rule::useHttpClient($client);
+it('can build a rule with negated conditions', function () {
+    $builder = Rule::create('#php')
+        ->not->retweets();
 
-    $rule = new Rule('cats has:images', 'cats with images');
-    $response = $rule->save();
-    /** @var Request $sentRequest */
-    $sentRequest = $requestsSent[0]['request'];
-
-    expect($sentRequest->getMethod())->toBe('POST');
-    expect((string)$sentRequest->getUri())->toBe('https://api.twitter.com/2/tweets/search/stream/rules');
-    expect($sentRequest->getBody()->getContents())->toBe(json_encode(['add' => [['value' => 'cats has:images', 'tag' => 'cats with images']]]));
-    expect($response)->toBe($returnedPayload);
+    expect((string)$builder)->toBe('#php -is:retweet');
 });
 
-it('can delete a rule', function () {
-    $requestsSent = [];
-    $client = useHttpClient([
-        [
-            'data' => [
-                '0' => [
-                    'value' => 'cats has:links',
-                    'tag' => 'cats with links',
-                    'id' => '1390687625925824521'
-                ]
-            ],
-            'meta' => [
-                'sent' => (new DateTime())->format(DateTimeImmutable::RFC3339),
-                'summary' => [
-                    'created' => 1,
-                    'not_created' => 0,
-                    'valid' => 1,
-                    'invalid' => 0
-                ]
-            ]
-        ],
-        ['stub' => true]
-    ], $requestsSent);
-    Rule::useHttpClient($client);
+it('can build a rule with bounding boxes limitation', function () {
+    $builder = Rule::create('#php')
+        ->boundingBox([15, 20, 30, 40]);
 
-    $rule = new Rule('cats has:images', 'cats with images');
-    $rule->save();
-    $rule->delete();
-    /** @var Request $sentRequest */
-    $sentRequest = $requestsSent[1]['request'];
+    expect((string)$builder)->toBe('#php bounding_box:[15 20 30 40]');
 
-    expect($sentRequest->getMethod())->toBe('POST');
-    expect((string)$sentRequest->getUri())->toBe('https://api.twitter.com/2/tweets/search/stream/rules');
-    expect($sentRequest->getBody()->getContents())->toBe(json_encode(['delete' => ['ids' => ['1390687625925824521']]]));
+    $builder = Rule::create('#php')
+        ->boundingBox([
+            [15, 20, 30, 40],
+            [12, 30, 45, 52]
+        ]);
+
+    expect((string)$builder)->toBe('#php bounding_box:[15 20 30 40] bounding_box:[12 30 45 52]');
+
+    $builder = Rule::create('#php')
+        ->not->boundingBox([
+            [15, 20, 30, 40],
+            [12, 30, 45, 52]
+        ]);
+
+    expect((string)$builder)->toBe('#php -bounding_box:[15 20 30 40] -bounding_box:[12 30 45 52]');
 });
 
+it('can create a rule wih boolean operators', function () {
+    $builder = Rule::create('')
+        ->raw('apple')
+        ->or()
+        ->raw('iphone ipad');
+
+    expect((string)$builder)->toBe('apple OR iphone ipad');
+});
+
+it('can create a a rule with grouping', function () {
+    $builder = Rule::create('skiing')
+        ->group(function (Rule $builder) {
+            return $builder->raw('-snow')->or()->raw('day')->or()->raw('noschool');
+        });
+
+    expect((string)$builder)->toBe('skiing (-snow OR day OR noschool)');
+});
+
+it('can not negate the sample field', function () {
+    Rule::create()->not->sample(15);
+})->throws(LogicException::class);
+
+it('can not not negate the nullcast field', function () {
+    Rule::create()->nullcast();
+})->throws(LogicException::class);
+
+it('can not negate a group', function () {
+    Rule::create()->not->group(function () {
+    });
+})->throws(LogicException::class);

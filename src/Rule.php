@@ -2,139 +2,80 @@
 
 namespace RWC\TwitterStream;
 
-use GuzzleHttp\Client;
-use RuntimeException;
+use LogicException;
+use Psr\Http\Message\ResponseInterface;
+use SplStack;
 
-class Rule
-{
-    protected static ?TwitterClient $httpClient = null;
-    protected ?string $id                       = null;
-    protected string $value;
-    protected string $tag;
+class Rule {
+    protected bool $negates = false;
+    /** @var SplStack<Attribute> */
+    protected SplStack $attributes;
 
-    public function __construct(string $value, ?string $tag = null)
+    public function __construct(string $query = '')
     {
-        static::ensureHttpClientIsLoaded();
-        $this->value = $value;
-        $this->tag   = $tag ?? $value;
+        $this->attributes = new SplStack();
+        $this->attributes->push(
+            new Attribute('QUERY', $query, headless: true)
+        );
     }
 
-    protected static function ensureHttpClientIsLoaded(): TwitterClient
-    {
-        if (static::$httpClient === null) {
-            throw new RuntimeException('You need to instantiate a TwitterStream before creating a rule or set the bearer token manually.');
+    public static function create(string $query = ''): self {
+        return new self($query);
+    }
+
+
+    public function saveWith(Connection $connection): ResponseInterface {
+        return $connection->request('POST', 'TODO');
+    }
+
+    public function __get(string $name) {
+        if ($name !== "not") {
+            trigger_error('Undefined property QueryBuilder::' . $name, E_USER_WARNING);
+
+            return null;
         }
 
-        return static::$httpClient;
+        return $this->negates();
     }
 
-    public static function all(): array
-    {
-        $rules = static::ensureHttpClientIsLoaded()->request('GET', 'https://api.twitter.com/2/tweets/search/stream/rules');
+    public function __set(string $name, mixed $value): void {
+        if (empty($value)) {
+            $this->negates(false);
 
-        return array_map(static function ($rawRule) {
-            $rule = new self($rawRule['value'], $rawRule['tag'] ?? '');
-            $rule->withId($rawRule['id']);
+            return;
+        }
 
-            return $rule;
-        }, $rules['data'] ?? []);
+        $isHeadless = in_array($name, ['and', 'or', 'query', 'raw']);
+
+
+        $this->attributes->push(new Attribute(
+            $isHeadless ? strtoupper($name) : $name,
+            $value,
+            $this->negates,
+            $isHeadless            
+        ));
     }
 
-    public function withId(string $id): static
-    {
-        $this->id = $id;
+    public function __call(string $name, array $arguments = []) {
+        $this->{$name} = $arguments[0]
+    }
+
+    protected function negates(bool $negates = true): self {
+        $this->negates = $negates;
 
         return $this;
     }
 
-    public static function useHttpClient(TwitterClient|Client $client): void
-    {
-        if ($client instanceof Client) {
-            $client = new TwitterClient($client);
+    public function group(callable $builder): self {
+        if ($this->negates) {
+            throw new LogicException('A group can not be negated. Negate each individual statement.');
         }
 
-        static::$httpClient = $client;
-    }
+        $stub = new self();
+        $builder($stub);
+        // This calls __set
+        $this->group = $stub;
 
-    public static function useBearerToken(string $bearerToken): void
-    {
-        static::$httpClient = new TwitterClient(new Client([
-            'headers' => [
-                'Authorization' => "Bearer {$bearerToken}",
-            ],
-        ]));
-    }
-
-    public static function create(string $name, ?string $tag = null): self
-    {
-        $rule = new self($name, $tag);
-        $rule->save();
-
-        return $rule;
-    }
-
-    public function save(): array
-    {
-        $results = static::addBulk($this);
-
-        if (array_key_exists('data', $results)) {
-            $this->withId($results['data'][0]['id']);
-        }
-
-        return $results;
-    }
-
-    public static function addBulk(self ...$rules): array
-    {
-        return static::bulk(['add' => $rules]);
-    }
-
-    public static function bulk(array $operations): array
-    {
-        $body = [];
-
-        if (array_key_exists('delete', $operations)) {
-            $body['delete'] = ['ids' => array_filter(array_map(static fn (Rule $rule) => $rule->getId(), $operations['delete']))];
-        }
-
-        if (array_key_exists('add', $operations)) {
-            $body['add'] = array_map(static fn (Rule $rule) => ['value' => $rule->getValue(), 'tag' => $rule->getTag()], $operations['add']);
-        }
-
-        return static::ensureHttpClientIsLoaded()->request('POST', 'https://api.twitter.com/2/tweets/search/stream/rules', [
-            'headers' => [
-                'Content-Type' => 'application/json',
-            ],
-            'body' => json_encode($body),
-        ]);
-    }
-
-    public function getId(): ?string
-    {
-        return $this->id;
-    }
-
-    public function getValue(): string
-    {
-        return $this->value;
-    }
-
-    public function getTag(): string
-    {
-        return $this->tag;
-    }
-
-    public function delete(): array
-    {
-        return static::deleteBulk($this);
-    }
-
-    public static function deleteBulk(self ...$rules): array
-    {
-        if (empty($rules)) {
-            return [];
-        }
-
-        return static::bulk(['delete' => $rules]);
+        return $this;
     }
 }
